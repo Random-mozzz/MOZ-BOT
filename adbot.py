@@ -2713,8 +2713,8 @@ async def main():
     from http.server import BaseHTTPRequestHandler, HTTPServer
     
     logger.info("تلاش برای بارگذاری متغیرهای محیطی...")
-    room_id = os.getenv("ROOM_ID", "68e771922d585712212e8070")
-    api_token = os.getenv("API_TOKEN", "ed578ca3bb6a6592059a878e4d807d0c7eac56742239fdcce7ca84841f2437e5")
+    room_id = os.getenv("ROOM_ID", "54ddfcee6134382cd9191000")
+    api_token = os.getenv("API_TOKEN", "dbf9705df09acb211997148df0731ca8708ecd94958bfe4bc4dd7c847c2a4199")
     
     if not room_id or not api_token:
         logger.error("ROOM_ID یا API_TOKEN تنظیم نشده‌اند.")
@@ -2761,7 +2761,7 @@ async def main():
     attempt = 0
     while attempt < max_reconnect_attempts:
         try:
-            room_id = os.environ.get("ROOM_ID", room_id)
+            room_id = os.environ.get("ROOM_ID", )
             bot_instance = AdvancedBot()
             bot_def = BotDefinition(room_id=room_id, api_token=api_token, bot=bot_instance)
             logger.info(f"تلاش برای اتصال به سرور Highrise... روم: {room_id}")
