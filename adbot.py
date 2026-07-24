@@ -1,4 +1,4 @@
-from highrise import BaseBot, User, Position
+from highrise import BaseBot, User, Position, Item
 from highrise.__main__ import BotDefinition
 from asyncio import sleep, create_task, CancelledError
 import asyncio
@@ -8,6 +8,7 @@ import logging
 from datetime import datetime, timedelta
 import random
 import aiohttp
+import requests
 
 # تنظیم لاگینگ
 logging.basicConfig(
@@ -20,22 +21,82 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+# ============================= وب‌سرویس اسپیکر (چت هوشمند) =============================
+
+def api_speaker(text: str, mode: str = None, restric: bool = False):
+    """فراخوانی وب‌سرویس اسپیکر برای گرفتن پاسخ متنی هوشمند."""
+    url = "https://l8pStudio.ir/apis-loop/api-speaker.php"
+    payload = {"text": text}
+    if mode:
+        payload["mode"] = mode
+    if restric:
+        payload["restric"] = True
+    try:
+        response = requests.post(url, json=payload, timeout=15)
+        if response.status_code == 200:
+            data = response.json()
+            if data["status"]:
+                return data["data"]
+    except Exception as e:
+        logger.error(f"خطا در فراخوانی وب‌سرویس اسپیکر: {e}")
+    return None
+
+
+def serialize_outfit(outfit_items) -> list:
+    """لیست آبجکت‌های Item رو به لیستی از دیکشنری قابل ذخیره در JSON تبدیل می‌کنه."""
+    result = []
+    for item in outfit_items:
+        result.append({
+            "type": getattr(item, "type", None),
+            "amount": getattr(item, "amount", 1),
+            "id": getattr(item, "id", None),
+            "account_bound": getattr(item, "account_bound", False),
+            "active_palette": getattr(item, "active_palette", None),
+        })
+    return result
+
+
+_PERSIAN_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+
+
+def to_persian_digits(number: int) -> str:
+    return str(number).translate(_PERSIAN_DIGITS)
+
+
+def deserialize_outfit(data: list):
+    """دیکشنری ذخیره‌شده در کانفیگ رو دوباره به لیست آبجکت‌های Item تبدیل می‌کنه."""
+    items = []
+    for d in data:
+        items.append(Item(
+            type=d.get("type"),
+            amount=d.get("amount", 1),
+            id=d.get("id"),
+            account_bound=d.get("account_bound", False),
+            active_palette=d.get("active_palette"),
+        ))
+    return items
+
 # تنظیمات پیش‌فرض
 CONFIG_FILE = "bot_config.json"
 DEFAULT_CONFIG = {
-    "host_usernames": ["mudkun"],
+    "host_usernames": ["ix_13_"],
     "admin_usernames": ["mudkun"],
     "vip_usernames": [],
     "banned_users": [],
+    "custom_ranks": {},
+    "current_outfit": None,
+    "outfit_presets": {},
+    "discovered_emotes": {},
     "teleport_locations": {
         "vip": {"x": 14.5, "y": 16.75, "z": 5.5},
         "vip1": {"x": 14.5, "y": 16.75, "z": 5.5},
         "dj": {"x": 9.5, "y": 10.75, "z": 10.5}
     },
     "language": "fa",
-    "welcome_message": "✨ 🌟 𝐖𝐞𝐥𝐜𝐨𝐦𝐞 {username} ❤️ 𝐆𝐥𝐚𝐝 𝐭𝐨 𝐡𝐚𝐯𝐞 𝐲𝐨𝐮 𝐡𝐞𝐫𝐞!\n🕺 𝐔𝐬𝐞 𝐍𝐮𝐦𝐛𝐞𝐫𝐬 (𝟏-𝟐𝟒𝟖) 𝐨𝐫 𝐄𝐦𝐨𝐭𝐞 𝐍𝐚𝐦𝐞𝐬 𝐭𝐨 𝐝𝐚𝐧𝐜𝐞!\n👑 𝐓𝐡𝐢𝐬 𝐛𝐨𝐭 𝐰𝐚𝐬 𝐜𝐫𝐞𝐚𝐭𝐞𝐝 & 𝐝𝐞𝐯𝐞𝐥𝐨𝐩𝐞𝐝 𝐛𝐲 @𝐚𝐝𝟎𝐫𝐢 😉\n📺 𝐒𝐮𝐛𝐬𝐜𝐫𝐢𝐛𝐞 𝐭𝐨 𝐨𝐮𝐫 𝐘𝐨𝐮𝐓𝐮𝐛𝐞: @𝐚𝐝𝐨𝐫𝐢_𝐡𝐢𝐭𝐨𝐭𝐬𝐨 🚀",
+    "welcome_message": "✨ 🌟 𝐖𝐞𝐥𝐜𝐨𝐦𝐞 {username} ❤️ 𝐆𝐥𝐚𝐝 𝐭𝐨 𝐡𝐚𝐯𝐞 𝐲𝐨𝐮 𝐡𝐞𝐫𝐞!\n🕺 𝐔𝐬𝐞 𝐍𝐮𝐦𝐛𝐞𝐫𝐬 (𝟏-𝟐𝟒𝟖)",
     "announcement_interval": 300,
-    "announcement_message": "برای اجاره بات به آیدی @ad0ri پیام دهید!"
+    "announcement_message": "برای اجاره بات به آیدی @nukdumپیام دهید!"
 }
 
 class AdvancedBot(BaseBot):
@@ -53,6 +114,13 @@ class AdvancedBot(BaseBot):
         self.loopchat_task = None
         self.frozen_users = {}
         self.party_dances = {}
+        self.speaker_enabled = False  # وضعیت روشن/خاموش بودن قابلیت چت هوشمند (اسپیکر)
+        self.speaker_mode = "polite"  # حالت لحن اسپیکر: polite (باادب) یا rude (بی‌ادب)
+        self.following_username = None  # یوزرنیمی که ربات الان داره دنبالش می‌کنه (!fallow)
+        self.muted_users = {}  # username -> دقیقه میوت (برای !mute)
+        self.bot_position = None  # آخرین موقعیت شناخته‌شده‌ی خودِ ربات
+        self.auto_walk_enabled = False  # وضعیت راه رفتن خودکار (!run)
+        self.auto_walk_task = None
         self.commands = {
             "!help": self.cmd_help,
             "!spam": self.cmd_spam,
@@ -86,7 +154,23 @@ class AdvancedBot(BaseBot):
             "!party": self.cmd_party,
             "!partys": self.cmd_partys,
             "!emotebot": self.cmd_emotebot,
-            "!loopchat": self.cmd_loopchat
+            "!loopchat": self.cmd_loopchat,
+            "!speaker": self.cmd_speaker,
+            "!speakerm": self.cmd_speaker_mode,
+            "!random": self.cmd_random,
+            "!tp": self.cmd_tp,
+            "!react": self.cmd_react,
+            "!commands": self.cmd_commands,
+            "!dances": self.cmd_dances,
+            "!fallow": self.cmd_fallow,
+            "!run": self.cmd_run,
+            "!item save": self.cmd_save_item,
+            "!mute": self.cmd_mute,
+            "!unmute": self.cmd_unmute,
+            "!mr": self.cmd_mr,
+            "!gr": self.cmd_gr,
+            "!dr": self.cmd_dr,
+            "!emotescan": self.cmd_emotescan
         }
         self.emotes = {
             "1": "idle_zombie",
@@ -815,6 +899,10 @@ class AdvancedBot(BaseBot):
             "threadexchangestar": "emote-threadexchange-star"
         }
 
+        # 🆕 دنس‌های کشف‌شده‌ی جدید (از طریق !emotescan) که قبلاً ذخیره شدن رو هم اضافه کن
+        # تا کد شماره‌ای، کد فارسی و اسمشون بعد از هر بار روشن شدن ربات هم باقی بمونه.
+        self.emotes.update(self.config.get("discovered_emotes", {}))
+
         self.emote_durations = {
             "idle_zombie": 28.754937,
             "idle_layingdown2": 21.546653,
@@ -1036,7 +1124,7 @@ class AdvancedBot(BaseBot):
             "dance-tiktok13": 15.0,
             "emote-cutesalute": 15.0,
             "emote-salute": 15.0,
-            "dance-floss": 11.0,
+            "dance-floss": 20.0,
             "emote-dead": 6.0,
             "emote-alice-shrink": 15.0,
             "emote-threadexchange-star": 15.0
@@ -1093,7 +1181,7 @@ class AdvancedBot(BaseBot):
         messages = {
             "fa": {
                 "welcome": self.config["welcome_message"],
-                "invalid_command": "❌ دستور نامعلوم! برای دیدن دستورات بات !help استفاده کنید یا به @ad0ri پیام بدید.",
+                "invalid_command": "❌ دستور نامعلوم! برای دیدن دستورات بات !help استفاده کنید یا به @mudkin پیام بدید.",
                 "no_permission": "فقط ادمین‌ها می‌توانند از این دستور استفاده کنند!",
                 "user_not_found": "کاربر {username} آنلاین نیست.",
                 "invalid_format": "فرمت نادرست: {format}",
@@ -1178,16 +1266,18 @@ class AdvancedBot(BaseBot):
             await self.highrise.chat("خطا: شناسه ربات پیدا نشد.")
             return
 
-        try:
-            dest = Position(x=16.5, y=0.25, z=3.5)
-            await self.highrise.teleport(user_id=self.user_id, dest=dest)
-            await self.highrise.chat("ربات به موقعیت اولیه (x=0.5, y=1.0, z=1.5) منتقل شد!")
-            logger.info("ربات به موقعیت اولیه تلپورت شد.")
-        except Exception as e:
-            logger.error(f"خطا در تلپورت اولیه: {e}")
-            await self.highrise.chat(f"خطا در تلپورت اولیه: {e}")
-
         await self.sync_room_users()
+
+        # 👕 اعمال ظاهر ذخیره‌شده (اگه قبلاً کسی با !item set/!item save یه ظاهر ست/سیو کرده باشه)
+        # اگه هیچ ظاهر ذخیره‌شده‌ای نباشه، ربات همون ظاهر پیش‌فرض حساب خودش رو حفظ می‌کنه.
+        saved_outfit = self.config.get("current_outfit")
+        if saved_outfit:
+            try:
+                await self.highrise.set_outfit(deserialize_outfit(saved_outfit))
+                logger.info("ظاهر ذخیره‌شده‌ی ربات با موفقیت اعمال شد.")
+            except Exception as e:
+                logger.error(f"خطا در اعمال ظاهر ذخیره‌شده: {e}")
+
         self.announcement_task = create_task(self.announcement_loop())
         self.score_update_task = create_task(self.score_update_loop())
 
@@ -1285,6 +1375,17 @@ class AdvancedBot(BaseBot):
             except Exception as e:
                 logger.error(f"خطا در بازگرداندن {username} به موقعیت فریز: {e}")
 
+        # 🐾 دنبال کردن (!fallow) — اگه ربات داره این کاربر رو دنبال می‌کنه، با راه رفتن واقعی تعقیبش کن
+        if self.following_username and username == self.following_username and user.id != self.user_id:
+            try:
+                await self.highrise.walk_to(position)
+                self.bot_position = position
+            except Exception as e:
+                logger.error(f"خطا در دنبال کردن {username}: {e}")
+
+        if user.id == self.user_id:
+            self.bot_position = position
+
     async def on_chat(self, user: User, message: str):
         username = user.username.lower()
         msg = message.strip()
@@ -1298,15 +1399,24 @@ class AdvancedBot(BaseBot):
             self.user_scores[username] = self.user_scores.get(username, 0) + 2
 
             if msg_lower in self.emotes:
-                await self.start_dance(user, self.emotes[msg_lower])
+                emote_name = self.emotes[msg_lower]
+                await self.start_dance(user, emote_name)
+                await self.highrise.chat(f"@{user.username} دنس با موفقیت اجرا شد ({emote_name})")
             elif msg_lower in ["stop", "استوپ"]:
                 await self.stop_dance(user)
             elif msg_lower in ["سازنده", "creature", "creator", "سازندت", "سازنده بات"]:
-                await self.highrise.chat("👑 سازنده این بات: @ad0ri 👑")
+                await self.highrise.chat("👑 سازنده این بات: @mudkun 👑")
+            elif msg.startswith("+"):
+                if self.speaker_enabled:
+                    await self.handle_speaker_message(user, msg[1:])
+                # اگه اسپیکر خاموش باشه، پیام‌های + بی‌صدا نادیده گرفته میشن
             elif msg_lower.startswith("!"):
                 parts = msg.split()
                 parts_lower = [p.lower() for p in parts]
-                cmd = parts_lower[0] if len(parts_lower) == 1 else ("!item set" if parts_lower[0] == "!item" else parts_lower[0])
+                if len(parts_lower) >= 2 and parts_lower[0] == "!item":
+                    cmd = f"!item {parts_lower[1]}"
+                else:
+                    cmd = parts_lower[0]
                 if cmd in self.commands:
                     await self.commands[cmd](user, parts)
                 else:
@@ -1321,6 +1431,42 @@ class AdvancedBot(BaseBot):
         if user_id == self.user_id:
             return
 
+        text_clean = text.strip().lower()
+
+        # 🆘 !help تو پیوی -> راهنمای دو دستور اصلی
+        if text_clean == "!help":
+            try:
+                await self.highrise.send_message(
+                    user_id,
+                    "سلام! 👋 برای دیدن اطلاعات ربات از این دو دستور استفاده کن:\n\n"
+                    "1: !commands  -> نمایش لیست کامل دستورات ربات\n"
+                    "2: !dances  -> نمایش لیست کد تمام دنس‌ها\n\n"
+                    "کافیه همین کلمه‌ها رو برام تو پیوی بفرستی.",
+                )
+            except Exception as e:
+                logger.error(f"خطا در ارسال راهنمای !help در پیوی: {e}")
+            return
+
+        # 📜 !commands تو پیوی
+        if text_clean == "!commands":
+            try:
+                full_text = self.build_commands_text()
+                for chunk in [full_text[i:i + 500] for i in range(0, len(full_text), 500)]:
+                    await self.highrise.send_message(user_id, chunk)
+            except Exception as e:
+                logger.error(f"خطا در ارسال لیست دستورات در پیوی: {e}")
+            return
+
+        # 💃 !dances تو پیوی
+        if text_clean == "!dances":
+            try:
+                full_text = self.build_dances_text()
+                for chunk in [full_text[i:i + 500] for i in range(0, len(full_text), 500)]:
+                    await self.highrise.send_message(user_id, chunk)
+            except Exception as e:
+                logger.error(f"خطا در ارسال لیست دنس‌ها در پیوی: {e}")
+            return
+
         # 👑 متن تبلیغاتی و معرفی ویژگی‌های ربات به همراه اطلاعات رنت
         auto_reply = (
             "سلام عزیز! ❤️\n\n"
@@ -1331,9 +1477,10 @@ class AdvancedBot(BaseBot):
             "🔹 قابلیت رقص همگانی و پارتی خودکار برای کل اعضای روم 🕺\n"
             "🔹 امنیت بالا و مدیریت کامل ادمین‌ها و دستورات اختصاصی 🛠️\n"
             "🔹 میزبانی ۲۴ ساعته و آنلاین بدون قطعی روی سرورهای قدرتمند ⚡\n\n"
+            "💬 برای دیدن لیست دستورات، برام بنویس !help\n\n"
             "🤝 **شرایط رنت (اجاره):**\n"
             "برای اجاره یا همان رنت این ربات فوق‌العاده برای روم خود، لطفاً همین الان به آیدی زیر پیام بدید:\n"
-            "👉 @ad0ri 👈"
+            "👉 @mudkun 👈"
         )
         
         try:
@@ -1437,7 +1584,7 @@ class AdvancedBot(BaseBot):
             "!party @username عدد - اجرای رقص اجباری برای کاربر\n"
             "!party all عدد - اجرای رقص برای همه\n"
             "!partys @username - توقف رقص اجباری کاربر\n\n"
-            "📩 برای اطلاعات بیشتر به @ad0ri پیام بدید!"
+            "📩 برای اطلاعات بیشتر به @mudkun پیام بدید!"
         )
         for chunk in [help_text[i:i+200] for i in range(0, len(help_text), 200)]:
             await self.highrise.chat(chunk)
@@ -2220,18 +2367,42 @@ class AdvancedBot(BaseBot):
             logger.error(f"خطا در cmd_deltele برای {location_name}: {str(e)}")
 
     async def cmd_set_item(self, user: User, parts: list):
+        """!item set @username -> کپی ظاهر یک کاربر | !item set شماره -> اعمال یک اسکین ذخیره‌شده (پریست)"""
         if user.username.lower() not in self.config["admin_usernames"]:
             await self.highrise.chat(self.get_message("no_permission"))
             logger.info(f"کاربر {user.username} دسترسی لازم برای اجرای !item set را ندارد.")
             return
 
-        parts = [p.lower() for p in parts]
-        if len(parts) != 3 or not parts[2].startswith("@"):
-            await self.highrise.chat(self.get_message("invalid_format", format="!item set @username"))
-            logger.info(f"فرمت نادرست برای دستور !item set توسط {user.username} وارد شد.")
+        if len(parts) != 3:
+            await self.highrise.chat(self.get_message("invalid_format", format="!item set @username یا !item set شماره"))
             return
 
-        target_username = parts[2][1:].lower()
+        target_spec = parts[2]
+
+        # حالت اول: !item set 1 / !item set 2 ... -> اعمال یک اسکین ذخیره‌شده (پریست)
+        if target_spec.isdigit():
+            preset = self.config["outfit_presets"].get(target_spec)
+            if not preset:
+                await self.highrise.chat(f"⚠️ پریست شماره {target_spec} هنوز ذخیره نشده. اول با !item save {target_spec} یه ظاهر رو ذخیره کن.")
+                return
+            try:
+                outfit_items = deserialize_outfit(preset)
+                await self.highrise.set_outfit(outfit_items)
+                self.config["current_outfit"] = preset
+                self.save_config()
+                await self.highrise.chat(f"✅ ظاهر ربات به پریست شماره {target_spec} تغییر کرد.")
+                logger.info(f"ظاهر ربات به پریست {target_spec} تغییر کرد توسط {user.username}.")
+            except Exception as e:
+                await self.highrise.chat(f"خطا در اعمال پریست: {e}")
+                logger.error(f"خطا در اعمال پریست {target_spec}: {e}")
+            return
+
+        # حالت دوم: !item set @username -> کپی کردن ظاهر یک کاربر
+        if not target_spec.startswith("@"):
+            await self.highrise.chat(self.get_message("invalid_format", format="!item set @username یا !item set شماره"))
+            return
+
+        target_username = target_spec[1:].lower()
         target_user = self.active_users.get(target_username)
         if not target_user:
             await self.highrise.chat(self.get_message("user_not_found", username=target_username))
@@ -2247,11 +2418,84 @@ class AdvancedBot(BaseBot):
 
             outfit_items = outfit_response.outfit
             await self.highrise.set_outfit(outfit_items)
+
+            # ذخیره‌ی خودکار ظاهر جدید تا بعد از ری‌استارت ربات هم حفظ بشه
+            self.config["current_outfit"] = serialize_outfit(outfit_items)
+            self.save_config()
+
             await self.highrise.chat(self.get_message("set_item_success", username=target_username))
             logger.info(f"ظاهر ربات به ایتم‌های {target_username} تغییر کرد: {outfit_items}")
         except Exception as e:
             await self.highrise.chat(f"خطا در تغییر ظاهر ربات: {str(e)}")
             logger.error(f"خطا در cmd_set_item برای {target_username}: {str(e)}")
+
+    async def cmd_save_item(self, user: User, parts: list):
+        """!item save شماره -> ذخیره‌ی ظاهر فعلیِ ربات به‌عنوان یک پریست قابل استفاده با !item set شماره"""
+        if user.username.lower() not in self.config["admin_usernames"]:
+            await self.highrise.chat(self.get_message("no_permission"))
+            return
+
+        if len(parts) != 3 or not parts[2].isdigit():
+            await self.highrise.chat("⚠️ فرمت اشتباه! استفاده کن از: !item save شماره (مثلاً !item save 1)")
+            return
+
+        slot = parts[2]
+        try:
+            outfit_response = await self.highrise.get_outfit()
+            outfit_items = outfit_response.outfit if hasattr(outfit_response, "outfit") else outfit_response
+            if not outfit_items:
+                await self.highrise.chat("⚠️ نتونستم ظاهر فعلی ربات رو بخونم.")
+                return
+
+            self.config["outfit_presets"][slot] = serialize_outfit(outfit_items)
+            self.save_config()
+            await self.highrise.chat(f"✅ ظاهر فعلی ربات به‌عنوان پریست شماره {slot} ذخیره شد. حالا هرکسی می‌تونه با !item set {slot} روش سوییچ کنه.")
+            logger.info(f"{user.username} ظاهر فعلی ربات رو تو پریست {slot} ذخیره کرد.")
+        except Exception as e:
+            await self.highrise.chat(f"خطا در ذخیره‌ی پریست: {e}")
+            logger.error(f"خطا در cmd_save_item برای اسلات {slot}: {e}")
+
+    async def cmd_run(self, user: User, parts: list):
+        """!run on / !run off -> روشن یا خاموش کردن راه رفتن خودکار ربات دور روم (مثل یک کاراکتر واقعی)"""
+        if user.username.lower() not in self.config["admin_usernames"]:
+            await self.highrise.chat(self.get_message("no_permission"))
+            return
+
+        if len(parts) < 2 or parts[1].lower() not in ("on", "off"):
+            await self.highrise.chat("⚠️ فرمت اشتباه! استفاده کن از: !run on یا !run off")
+            return
+
+        if parts[1].lower() == "on":
+            if self.auto_walk_enabled:
+                await self.highrise.chat("⚠️ راه رفتن خودکار از قبل روشنه.")
+                return
+            self.auto_walk_enabled = True
+            self.auto_walk_task = create_task(self.auto_walk_loop())
+            await self.highrise.chat("🚶 راه رفتن خودکار ربات روشن شد.")
+        else:
+            self.auto_walk_enabled = False
+            if self.auto_walk_task and not self.auto_walk_task.done():
+                self.auto_walk_task.cancel()
+            await self.highrise.chat("🛑 راه رفتن خودکار ربات خاموش شد.")
+
+    async def auto_walk_loop(self):
+        """هر چند ثانیه یک‌بار، ربات به یک نقطه‌ی نزدیک تصادفی راه می‌ره تا شبیه یک کاراکتر واقعی رفتار کنه."""
+        try:
+            while self.auto_walk_enabled:
+                base = self.bot_position or Position(x=0.0, y=0.0, z=0.0)
+                dest = Position(
+                    x=base.x + random.uniform(-2.0, 2.0),
+                    y=base.y,
+                    z=base.z + random.uniform(-2.0, 2.0),
+                )
+                try:
+                    await self.highrise.walk_to(dest)
+                    self.bot_position = dest
+                except Exception as e:
+                    logger.error(f"خطا در راه رفتن خودکار: {e}")
+                await sleep(random.uniform(5.0, 9.0))
+        except CancelledError:
+            logger.info("راه رفتن خودکار متوقف شد.")
 
     async def cmd_welcome(self, user: User, parts: list):
         if user.username.lower() not in self.config["admin_usernames"]:
@@ -2336,9 +2580,9 @@ class AdvancedBot(BaseBot):
             logger.error(f"خطا در cmd_removeadmin برای {target_username}: {str(e)}")
 
     async def cmd_addhost(self, user: User, parts: list):
-        """⚠️ اختصاصی: فقط خود مالک اصلی بات (ad0ri) می‌تواند رتبه Host بدهد؛
+        """⚠️ اختصاصی: فقط خود مالک اصلی بات (mudkun) می‌تواند رتبه Host بدهد؛
         حتی سایر Host‌ها هم اجازه اجرای این دستور را ندارند."""
-        if user.username.lower() != "ad0ri":
+        if user.username.lower() != "mudkun":
             await self.highrise.chat("❌ دسترسی غیرمجاز!")
             logger.info(f"کاربر {user.username} سعی کرد !addhost را اجرا کند اما دسترسی ندارد.")
             return
@@ -2366,8 +2610,8 @@ class AdvancedBot(BaseBot):
             logger.error(f"خطا در cmd_addhost برای {target_username}: {str(e)}")
 
     async def cmd_removehost(self, user: User, parts: list):
-        """⚠️ اختصاصی: فقط خود مالک اصلی بات (ad0ri) می‌تواند رتبه Host را بگیرد."""
-        if user.username.lower() != "ad0ri":
+        """⚠️ اختصاصی: فقط خود مالک اصلی بات (mudkun) می‌تواند رتبه Host را بگیرد."""
+        if user.username.lower() != "mudkuni":
             await self.highrise.chat("❌ دسترسی غیرمجاز!")
             logger.info(f"کاربر {user.username} سعی کرد !removehost را اجرا کند اما دسترسی ندارد.")
             return
@@ -2614,31 +2858,535 @@ class AdvancedBot(BaseBot):
             return
 
         if len(parts) < 2:
-            await self.highrise.chat("⚠️ فرمت اشتباه! فرمت صحیح: !loopchat پیام شما")
+            await self.highrise.chat("⚠️ فرمت اشتباه! فرمت صحیح: !loopchat [تایم به ثانیه (حداقل 3)] پیام شما")
             return
 
-        # تمام متن بعد از !loopchat رو بگیر
-        loop_message = " ".join(parts[1:])
+        # اگه اولین آرگومان بعد از !loopchat یه عدد معتبر (>=3) باشه، به‌عنوان تایم تکرار در نظر گرفته میشه
+        interval = 10.0
+        message_parts = parts[1:]
+        if parts[1].isdigit():
+            requested_interval = int(parts[1])
+            if requested_interval < 3:
+                await self.highrise.chat("⚠️ تایم تکرار باید حداقل 3 ثانیه باشد.")
+                return
+            interval = float(requested_interval)
+            message_parts = parts[2:]
+
+        if not message_parts:
+            await self.highrise.chat("⚠️ فرمت اشتباه! فرمت صحیح: !loopchat [تایم به ثانیه (حداقل 3)] پیام شما")
+            return
+
+        # تمام متن باقی‌مانده رو به‌عنوان پیام تکرارشونده در نظر بگیر
+        loop_message = " ".join(message_parts)
         
         # اگر loopchat فعلاً در حال اجراست، آن را لغو کن
         if hasattr(self, 'loopchat_task') and self.loopchat_task:
             self.loopchat_task.cancel()
         
-        await self.highrise.chat(f"✅ حالت تکرار فعال شد! پیام: {loop_message}")
-        logger.info(f"loopchat فعال شد توسط {user.username}: {loop_message}")
+        await self.highrise.chat(f"✅ حالت تکرار فعال شد! (هر {int(interval)} ثانیه) پیام: {loop_message}")
+        logger.info(f"loopchat فعال شد توسط {user.username} با تایم {interval} ثانیه: {loop_message}")
         
         # شروع حلقه ارسال پیام
         async def loopchat_loop():
             try:
                 while True:
                     await self.highrise.chat(loop_message)
-                    await sleep(10.0)  # هر ۱۰ ثانیه تکرار
+                    await sleep(interval)
             except CancelledError:
                 logger.info("loopchat لغو شد.")
             except Exception as e:
                 logger.error(f"خطا در loopchat: {e}")
         
         self.loopchat_task = create_task(loopchat_loop())
+
+    async def cmd_speaker(self, user: User, parts: list):
+        """!speaker on / !speaker off — روشن یا خاموش کردن قابلیت چت هوشمند (اسپیکر)."""
+        admins_lower = [admin.lower() for admin in self.config.get("admin_usernames", [])]
+        if user.username.lower() not in admins_lower and not self.is_host(user.username):
+            await self.highrise.chat("❌ این دستور مخصوص ادمین‌ها و هاست‌های ربات است!")
+            return
+
+        if len(parts) < 2 or parts[1].lower() not in ("on", "off"):
+            await self.highrise.chat("⚠️ فرمت اشتباه! استفاده کن از: !speaker on یا !speaker off")
+            return
+
+        if parts[1].lower() == "on":
+            self.speaker_enabled = True
+            await self.highrise.chat("🗣️ اسپیکر روشن شد! حالا برای صحبت با ربات، اول جمله رو با + شروع کن.")
+        else:
+            self.speaker_enabled = False
+            await self.highrise.chat("🔇 اسپیکر خاموش شد.")
+
+    async def cmd_speaker_mode(self, user: User, parts: list):
+        """!speakerm — لحن اسپیکر رو بین باادب (polite) و بی‌ادب (rude) عوض می‌کنه."""
+        admins_lower = [admin.lower() for admin in self.config.get("admin_usernames", [])]
+        if user.username.lower() not in admins_lower and not self.is_host(user.username):
+            await self.highrise.chat("❌ این دستور مخصوص ادمین‌ها و هاست‌های ربات است!")
+            return
+
+        self.speaker_mode = "rude" if self.speaker_mode == "polite" else "polite"
+        label = "بی‌ادب 😈" if self.speaker_mode == "rude" else "باادب 😇"
+        await self.highrise.chat(f"🗣️ لحن اسپیکر عوض شد: {label}")
+
+    async def handle_speaker_message(self, user: User, spoken_text: str):
+        """پیام کاربر (بعد از حذف +) رو به وب‌سرویس اسپیکر می‌فرسته و پاسخ رو تو چت روم می‌گه."""
+        spoken_text = spoken_text.strip()
+        if not spoken_text:
+            return
+        try:
+            # چون api_speaker با requests (sync) نوشته شده، تو یه ترد جدا اجراش می‌کنیم
+            # تا event loop اصلی ربات مسدود (block) نشه.
+            answer = await asyncio.to_thread(api_speaker, spoken_text, self.speaker_mode)
+            if answer:
+                await self.highrise.chat(answer)
+            else:
+                await self.highrise.chat("⚠️ اسپیکر الان جواب نداد، دوباره امتحان کن.")
+        except Exception as e:
+            logger.error(f"خطا در handle_speaker_message برای {user.username}: {e}")
+            await self.highrise.chat("⚠️ خطا در ارتباط با سرویس اسپیکر.")
+
+    async def cmd_random(self, user: User, parts: list):
+        """!random -> تاس (عدد ۱ تا ۶) | !random گزینه1 گزینه2 ... -> گردونه بین گزینه‌ها"""
+        if len(parts) == 1:
+            result = random.randint(1, 6)
+            await self.highrise.chat(f"🎲 @{user.username} تاس انداخت و عدد {result} اومد!")
+            logger.info(f"{user.username} تاس انداخت: {result}")
+            return
+
+        options = parts[1:]
+        winner = random.choice(options)
+        await self.highrise.chat(f"🎡 گردونه چرخید... و رو «{winner}» ایستاد! (درخواست @{user.username})")
+        logger.info(f"گردونه {user.username} با گزینه‌های {options} -> {winner}")
+
+    async def cmd_tp(self, user: User, parts: list):
+        """!tp all X Y Z یا !tp @username X Y Z -> تلپورت به مختصات دقیق"""
+        if user.username.lower() not in self.config["admin_usernames"]:
+            await self.highrise.chat(self.get_message("no_permission"))
+            return
+
+        if len(parts) != 5:
+            await self.highrise.chat("⚠️ فرمت اشتباه! استفاده کن از: !tp all X Y Z یا !tp @username X Y Z")
+            return
+
+        target_spec = parts[1]
+        try:
+            x, y, z = float(parts[2]), float(parts[3]), float(parts[4])
+        except ValueError:
+            await self.highrise.chat("⚠️ مختصات X, Y, Z باید عدد باشن.")
+            return
+
+        dest = Position(x=x, y=y, z=z)
+
+        if target_spec.lower() == "all":
+            successful = 0
+            for username, target_user in list(self.active_users.items()):
+                if target_user.id == self.user_id:
+                    continue
+                try:
+                    await self.highrise.teleport(user_id=target_user.id, dest=dest)
+                    successful += 1
+                    await sleep(0.3)
+                except Exception as e:
+                    logger.error(f"خطا در تلپورت {username} به مختصات دلخواه: {e}")
+            await self.highrise.chat(f"✅ {successful} کاربر به مختصات ({x}, {y}, {z}) تلپورت شدند.")
+        elif target_spec.startswith("@"):
+            target_username = target_spec[1:].lower()
+            target_user = self.active_users.get(target_username)
+            if not target_user:
+                await self.highrise.chat(self.get_message("user_not_found", username=target_username))
+                return
+            try:
+                await self.highrise.teleport(user_id=target_user.id, dest=dest)
+                await self.highrise.chat(f"✅ @{target_user.username} به مختصات ({x}, {y}, {z}) تلپورت شد.")
+            except Exception as e:
+                await self.highrise.chat(self.get_message("teleport_error", error=str(e)))
+                logger.error(f"خطا در تلپورت {target_username}: {e}")
+        else:
+            await self.highrise.chat("⚠️ فرمت اشتباه! استفاده کن از: !tp all X Y Z یا !tp @username X Y Z")
+
+    async def cmd_react(self, user: User, parts: list):
+        """!react نوع تعداد @username یا !react نوع all -> ارسال هر نوع واکنشی (heart, clap, wave, wink, thumbs, ...)"""
+        if len(parts) < 3:
+            await self.highrise.chat("⚠️ فرمت اشتباه! استفاده کن از: !react نوع تعداد @username یا !react نوع all")
+            return
+
+        reaction_type = parts[1].lower()
+
+        if parts[2].lower() == "all":
+            if user.username.lower() not in self.config["admin_usernames"]:
+                await self.highrise.chat(self.get_message("no_permission"))
+                return
+            successful = 0
+            for username, target_user in list(self.active_users.items()):
+                if target_user.id == self.user_id:
+                    continue
+                try:
+                    await self.highrise.react(reaction_type, target_user.id)
+                    successful += 1
+                    await sleep(0.5)
+                except Exception as e:
+                    logger.error(f"خطا در ارسال واکنش {reaction_type} به {username}: {e}")
+            await self.highrise.chat(f"✅ واکنش «{reaction_type}» به {successful} نفر ارسال شد.")
+            return
+
+        if len(parts) != 4:
+            await self.highrise.chat("⚠️ فرمت اشتباه! استفاده کن از: !react نوع تعداد @username")
+            return
+
+        try:
+            count = int(parts[2])
+            if count < 1 or count > 100:
+                await self.highrise.chat("⚠️ تعداد باید بین 1 تا 100 باشد.")
+                return
+        except ValueError:
+            await self.highrise.chat("⚠️ عدد نامعتبر است.")
+            return
+
+        target_username = parts[3].lstrip('@').lower()
+        target_user = self.active_users.get(target_username)
+        if not target_user:
+            await self.highrise.chat(self.get_message("user_not_found", username=target_username))
+            return
+
+        try:
+            for _ in range(count):
+                await self.highrise.react(reaction_type, target_user.id)
+                await sleep(0.5)
+            await self.highrise.chat(f"✅ واکنش «{reaction_type}» ({count} بار) به @{target_user.username} ارسال شد.")
+        except Exception as e:
+            await self.highrise.chat(f"خطا در ارسال واکنش: {e}")
+            logger.error(f"خطا در ارسال واکنش {reaction_type} به {target_username}: {e}")
+
+    def build_commands_text(self) -> str:
+        return (
+            "📜 لیست کامل دستورات ربات:\n\n"
+            "1-248 - اجرای رقص با کد عددی (لیست کامل: !dances)\n"
+            "stop - توقف رقص\n"
+            "!help - نمایش راهنما\n"
+            "!commands - نمایش همین لیست دستورات\n"
+            "!dances - نمایش لیست کد تمام دنس‌ها\n"
+            "!spam تعداد پیام - ارسال پیام اسپم (ادمین)\n"
+            "!tele @username [vip|vip1|dj|مکان_سفارشی] - تلپورت به مکان ذخیره‌شده (ادمین)\n"
+            "!tele to @username / !tele me @username / !tele me all - تلپورت بین کاربران (ادمین)\n"
+            "!tp all X Y Z / !tp @username X Y Z - تلپورت به مختصات دقیق (ادمین)\n"
+            "!fallow @username - ربات دنبال کاربر راه می‌افته (واقعی، با قدم زدن)، دوباره بزن تا متوقف بشه (ادمین/هاست)\n"
+            "!run on / !run off - راه رفتن خودکار ربات دور روم مثل یک کاراکتر واقعی (ادمین)\n"
+            "!heart تعداد @username / !heart all - ارسال قلب بنفش\n"
+            "!clap تعداد @username / !clap all - ارسال clap\n"
+            "!wink تعداد @username / !wink all - ارسال wink\n"
+            "!wave تعداد @username / !wave all - ارسال wave\n"
+            "!thumbs تعداد @username / !thumbs all - ارسال thumbs-up\n"
+            "!react نوع تعداد @username / !react نوع all - ارسال هر نوع واکنش دلخواه\n"
+            "!random - انداختن تاس (عدد 1 تا 6)\n"
+            "!random گزینه1 گزینه2 ... - گردونه شانس بین گزینه‌ها\n"
+            "!mute @username [دقیقه] - میوت کردن کاربر (ادمین)\n"
+            "!unmute @username - آنمیوت کردن کاربر (ادمین)\n"
+            "!wallet - نمایش موجودی ربات\n"
+            "!set - تلپورت ربات به ادمین\n"
+            "!item set @username - تغییر ظاهر ربات به ایتم‌های یک کاربر (ذخیره خودکار میشه)\n"
+            "!item set شماره - اعمال یک اسکین ذخیره‌شده (پریست)\n"
+            "!item save شماره - ذخیره‌ی ظاهر فعلی ربات به‌عنوان یک پریست (ادمین)\n"
+            "!tip <تعداد> all - تیپ به همه\n"
+            "!vip / !vip1 / !dj / !down - تلپورت به مکان‌های ثابت\n"
+            "!ban @username / !unban @username - بن/آنبن کردن کاربر (ادمین)\n"
+            "!dancechain - اجرای زنجیره رقص\n"
+            "!addtele نام_مکان / !deltele نام_مکان - مدیریت مکان‌های تلپورت (ادمین)\n"
+            "!welcome پیام - تنظیم پیام خوش‌آمدگویی (ادمین)\n"
+            "!addadmin @username / !removeadmin @username - مدیریت ادمین‌ها (فقط Host)\n"
+            "!addhost @username / !removehost @username - مدیریت هاست‌ها (فقط Host)\n"
+            "!emotebot نام/شماره_دنس - تغییر دنس مداوم ربات (ادمین)\n"
+            "!loopchat [تایم ثانیه >=3] پیام - تنظیم پیام تکرارشونده ربات (ادمین)\n"
+            "!listadd - نمایش لیست ادمین‌ها\n"
+            "!freeze @username / !unfreeze @username - فریز کردن/آزادسازی کاربر (ادمین)\n"
+            "!party @username عدد / !party all عدد - اجرای رقص اجباری (ادمین)\n"
+            "!partys @username - توقف رقص اجباری کاربر (ادمین)\n"
+            "!speaker on / !speaker off - روشن و خاموش کردن چت هوشمند (ادمین/هاست)\n"
+            "!speakerm - تغییر لحن اسپیکر بین باادب/بی‌ادب (ادمین/هاست)\n"
+            "+متن - صحبت با اسپیکر (وقتی روشن باشه)\n"
+            "!MR نام_رنک - ساخت رنک دلخواه (ادمین)\n"
+            "!GR نام_رنک @username - دادن/گرفتن رنک از کاربر (ادمین)\n"
+            "!DR نام_رنک - حذف رنک دلخواه (ادمین)\n\n"
+            "📩 برای اطلاعات بیشتر به @mudkun پیام بدید!"
+        )
+
+    def build_dances_text(self) -> str:
+        lines = ["💃 لیست کد دنس‌ها (کد -> نام دنس):\n"]
+        numeric_codes = sorted(
+            [k for k in self.emotes.keys() if k.isdigit()],
+            key=lambda k: int(k),
+        )
+        for code in numeric_codes:
+            lines.append(f"{code} -> {self.emotes[code]}")
+        return "\n".join(lines)
+
+    async def cmd_commands(self, user: User, parts: list):
+        text = self.build_commands_text()
+        for chunk in [text[i:i + 200] for i in range(0, len(text), 200)]:
+            await self.highrise.chat(chunk)
+        logger.info(f"لیست دستورات توسط {user.username} درخواست شد.")
+
+    async def cmd_dances(self, user: User, parts: list):
+        text = self.build_dances_text()
+        for chunk in [text[i:i + 200] for i in range(0, len(text), 200)]:
+            await self.highrise.chat(chunk)
+        logger.info(f"لیست دنس‌ها توسط {user.username} درخواست شد.")
+
+    async def cmd_fallow(self, user: User, parts: list):
+        """!fallow @username -> ربات شروع به دنبال کردن (راه رفتن پشت سر) کاربر می‌کنه؛ دوباره زدن همون یوزر متوقفش می‌کنه."""
+        admins_lower = [admin.lower() for admin in self.config.get("admin_usernames", [])]
+        if user.username.lower() not in admins_lower and not self.is_host(user.username):
+            await self.highrise.chat("❌ این دستور مخصوص ادمین‌ها و هاست‌های ربات است!")
+            return
+
+        if len(parts) < 2 or not parts[1].startswith("@"):
+            if self.following_username:
+                self.following_username = None
+                await self.highrise.chat("🛑 ربات دنبال کردن رو متوقف کرد.")
+            else:
+                await self.highrise.chat("⚠️ فرمت اشتباه! استفاده کن از: !fallow @username")
+            return
+
+        target_username = parts[1][1:].lower()
+
+        if self.following_username == target_username:
+            self.following_username = None
+            await self.highrise.chat(f"🛑 ربات دیگه دنبال @{target_username} نمیره.")
+            return
+
+        target_user = self.active_users.get(target_username)
+        if not target_user:
+            await self.highrise.chat(self.get_message("user_not_found", username=target_username))
+            return
+
+        self.following_username = target_username
+        await self.highrise.chat(f"🐾 ربات از الان دنبال @{target_user.username} می‌ره!")
+
+        position = self.user_positions.get(target_username)
+        if position:
+            try:
+                await self.highrise.walk_to(position)
+                self.bot_position = position
+            except Exception as e:
+                logger.error(f"خطا در حرکت اولیه هنگام فالو کردن {target_username}: {e}")
+
+    async def cmd_mute(self, user: User, parts: list):
+        """!mute @username [دقیقه] -> میوت کردن کاربر"""
+        if user.username.lower() not in self.config["admin_usernames"]:
+            await self.highrise.chat(self.get_message("no_permission"))
+            return
+
+        if len(parts) < 2 or not parts[1].startswith("@"):
+            await self.highrise.chat("⚠️ فرمت اشتباه! استفاده کن از: !mute @username [دقیقه]")
+            return
+
+        target_username = parts[1][1:].lower()
+        target_user = self.active_users.get(target_username)
+        if not target_user:
+            await self.highrise.chat(self.get_message("user_not_found", username=target_username))
+            return
+
+        minutes = 5
+        if len(parts) >= 3:
+            try:
+                minutes = int(parts[2])
+            except ValueError:
+                await self.highrise.chat("⚠️ زمان باید یک عدد (به دقیقه) باشد.")
+                return
+
+        try:
+            # نکته: واحد دقیق پارامتر action_length در SDK هایرایز مستند نشده؛
+            # اینجا به‌عنوان ثانیه فرستاده میشه. اگه رفتار واقعی فرق داشت، این عدد رو تنظیم کن.
+            await self.highrise.moderate_room(target_user.id, "mute", minutes * 60)
+            self.muted_users[target_username] = minutes
+            await self.highrise.chat(f"🔇 @{target_user.username} به مدت {minutes} دقیقه میوت شد.")
+            logger.info(f"{user.username} کاربر {target_username} رو برای {minutes} دقیقه میوت کرد.")
+        except Exception as e:
+            await self.highrise.chat(f"خطا در میوت کردن: {e}")
+            logger.error(f"خطا در میوت {target_username}: {e}")
+
+    async def cmd_unmute(self, user: User, parts: list):
+        if user.username.lower() not in self.config["admin_usernames"]:
+            await self.highrise.chat(self.get_message("no_permission"))
+            return
+
+        if len(parts) < 2 or not parts[1].startswith("@"):
+            await self.highrise.chat("⚠️ فرمت اشتباه! استفاده کن از: !unmute @username")
+            return
+
+        target_username = parts[1][1:].lower()
+        target_user = self.active_users.get(target_username)
+        if not target_user:
+            await self.highrise.chat(self.get_message("user_not_found", username=target_username))
+            return
+
+        try:
+            await self.highrise.moderate_room(target_user.id, "unmute")
+            self.muted_users.pop(target_username, None)
+            await self.highrise.chat(f"🔊 @{target_user.username} آنمیوت شد.")
+        except Exception as e:
+            await self.highrise.chat(f"خطا در آنمیوت کردن: {e}")
+            logger.error(f"خطا در آنمیوت {target_username}: {e}")
+
+    async def cmd_mr(self, user: User, parts: list):
+        """!MR نام_رنک -> ساخت یک رنک دلخواه جدید"""
+        if user.username.lower() not in self.config["admin_usernames"]:
+            await self.highrise.chat(self.get_message("no_permission"))
+            return
+
+        if len(parts) < 2:
+            await self.highrise.chat("⚠️ فرمت اشتباه! استفاده کن از: !MR نام_رنک")
+            return
+
+        rank_name = parts[1]
+        if rank_name in self.config["custom_ranks"]:
+            await self.highrise.chat(f"⚠️ رنک «{rank_name}» از قبل وجود دارد.")
+            return
+
+        self.config["custom_ranks"][rank_name] = []
+        self.save_config()
+        await self.highrise.chat(f"✅ رنک «{rank_name}» ساخته شد.")
+        logger.info(f"{user.username} رنک {rank_name} رو ساخت.")
+
+    async def cmd_gr(self, user: User, parts: list):
+        """!GR نام_رنک @username -> دادن یا گرفتن رنک از کاربر (toggle)"""
+        if user.username.lower() not in self.config["admin_usernames"]:
+            await self.highrise.chat(self.get_message("no_permission"))
+            return
+
+        if len(parts) < 3 or not parts[2].startswith("@"):
+            await self.highrise.chat("⚠️ فرمت اشتباه! استفاده کن از: !GR نام_رنک @username")
+            return
+
+        rank_name = parts[1]
+        target_username = parts[2][1:].lower()
+
+        if rank_name not in self.config["custom_ranks"]:
+            await self.highrise.chat(f"⚠️ رنک «{rank_name}» وجود ندارد. اول با !MR بسازش.")
+            return
+
+        members = self.config["custom_ranks"][rank_name]
+        if target_username in members:
+            members.remove(target_username)
+            self.save_config()
+            await self.highrise.chat(f"➖ رنک «{rank_name}» از @{target_username} گرفته شد.")
+        else:
+            members.append(target_username)
+            self.save_config()
+            await self.highrise.chat(f"➕ رنک «{rank_name}» به @{target_username} داده شد.")
+
+    async def cmd_dr(self, user: User, parts: list):
+        """!DR نام_رنک -> حذف کامل یک رنک دلخواه"""
+        if user.username.lower() not in self.config["admin_usernames"]:
+            await self.highrise.chat(self.get_message("no_permission"))
+            return
+
+        if len(parts) < 2:
+            await self.highrise.chat("⚠️ فرمت اشتباه! استفاده کن از: !DR نام_رنک")
+            return
+
+        rank_name = parts[1]
+        if rank_name not in self.config["custom_ranks"]:
+            await self.highrise.chat(f"⚠️ رنک «{rank_name}» وجود ندارد.")
+            return
+
+        del self.config["custom_ranks"][rank_name]
+        self.save_config()
+        await self.highrise.chat(f"🗑 رنک «{rank_name}» حذف شد.")
+        logger.info(f"{user.username} رنک {rank_name} رو حذف کرد.")
+
+    async def cmd_emotescan(self, user: User, parts: list):
+        """!emotescan [تعداد هدف، پیش‌فرض 270] -> با استفاده از کاتالوگ واقعی هایرایز (self.webapi)،
+        دنس‌های واقعی جدیدی که هنوز تو لیست ربات نیستن رو پیدا می‌کنه و با کد عددی + کد فارسی + اسم اضافه می‌کنه.
+        این کار به‌جای حدس زدن شناسه‌ی دنس (که می‌تونه اشتباه و باعث خرابی بشه)، مستقیم از خود سرور هایرایز داده می‌گیره."""
+        if user.username.lower() not in self.config["admin_usernames"]:
+            await self.highrise.chat(self.get_message("no_permission"))
+            return
+
+        target_total = 270
+        if len(parts) >= 2 and parts[1].isdigit():
+            target_total = int(parts[1])
+
+        numeric_codes = [k for k in self.emotes.keys() if k.isdigit()]
+        current_max = max((int(k) for k in numeric_codes), default=0)
+        existing_ids = set(self.emotes.values())
+
+        if current_max >= target_total:
+            await self.highrise.chat(f"✅ همین الانشم {current_max} دنس با کد عددی داری، نیازی به اسکن نیست.")
+            return
+
+        await self.highrise.chat("🔎 در حال جستجوی دنس‌های واقعی جدید تو کاتالوگ هایرایز... (ممکنه چند ثانیه طول بکشه)")
+
+        try:
+            new_items = []
+            cursor = None
+            pages_checked = 0
+            # حداکثر ۱۰ صفحه بررسی میشه تا از حلقه‌ی بی‌پایان جلوگیری بشه
+            while len(new_items) < (target_total - current_max) and pages_checked < 10:
+                if cursor:
+                    response = await self.webapi.get_items(starts_after=cursor)
+                else:
+                    response = await self.webapi.get_items()
+                pages_checked += 1
+
+                items_list = getattr(response, "items", None) or (response if isinstance(response, list) else [])
+                if not items_list:
+                    break
+
+                for it in items_list:
+                    item_id = getattr(it, "id", None) or (it.get("id") if isinstance(it, dict) else None)
+                    item_type = getattr(it, "item_type", None) or getattr(it, "type", None) or (
+                        it.get("item_type") if isinstance(it, dict) else None
+                    )
+                    if not item_id:
+                        continue
+                    is_dance_like = (
+                        item_id.startswith("dance-") or item_id.startswith("emote-") or item_id.startswith("idle-")
+                        or (item_type and "emote" in str(item_type).lower())
+                    )
+                    if is_dance_like and item_id not in existing_ids:
+                        new_items.append(item_id)
+                        existing_ids.add(item_id)
+
+                cursor = getattr(response, "next_cursor", None) or (
+                    response.get("next_cursor") if isinstance(response, dict) else None
+                )
+                if not cursor:
+                    break
+
+            if not new_items:
+                await self.highrise.chat("⚠️ دنس واقعی جدیدی تو کاتالوگ پیدا نشد (یا API فعلی این نوع فیلتر رو پشتیبانی نمی‌کنه).")
+                return
+
+            added = 0
+            code = current_max + 1
+            for item_id in new_items:
+                if code > target_total:
+                    break
+                # اسم خوانا از روی شناسه‌ی آیتم می‌سازیم (مثلاً "dance-newmove2026" -> "newmove2026")
+                readable_name = item_id.split("-", 1)[1] if "-" in item_id else item_id
+                self.emotes[str(code)] = item_id
+                self.emotes[to_persian_digits(code)] = item_id
+                self.emotes[readable_name] = item_id
+                self.config["discovered_emotes"][str(code)] = item_id
+                self.config["discovered_emotes"][to_persian_digits(code)] = item_id
+                self.config["discovered_emotes"][readable_name] = item_id
+                added += 1
+                code += 1
+
+            self.save_config()
+            await self.highrise.chat(
+                f"✅ {added} دنس واقعی جدید اضافه شد (کدهای {current_max + 1} تا {code - 1}). "
+                f"الان مجموعاً {code - 1} دنس داری! برای لیست کامل: !dances"
+            )
+            logger.info(f"{user.username} با !emotescan تعداد {added} دنس جدید اضافه کرد.")
+        except AttributeError:
+            await self.highrise.chat(
+                "❌ متاسفانه SDK نصب‌شده روی این سرور از self.webapi.get_items() پشتیبانی نمی‌کنه. "
+                "لطفاً نسخه‌ی highrise-bot-sdk رو آپدیت کن."
+            )
+        except Exception as e:
+            await self.highrise.chat(f"❌ خطا در اسکن کاتالوگ: {e}")
+            logger.error(f"خطا در cmd_emotescan: {e}")
 
     async def cmd_emotebot(self, user: User, parts: list):
         admins_lower = [admin.lower() for admin in self.config.get("admin_usernames", [])]
@@ -2713,8 +3461,8 @@ async def main():
     from http.server import BaseHTTPRequestHandler, HTTPServer
     
     logger.info("تلاش برای بارگذاری متغیرهای محیطی...")
-    room_id = os.getenv("ROOM_ID", "54ddfcee6134382cd9191000")
-    api_token = os.getenv("API_TOKEN", "dbf9705df09acb211997148df0731ca8708ecd94958bfe4bc4dd7c847c2a4199")
+    room_id = os.getenv("6a63d0c1205f742655143361")
+    api_token = os.getenv("dbf9705df09acb211997148df0731ca8708ecd94958bfe4bc4dd7c847c2a4199")
     
     if not room_id or not api_token:
         logger.error("ROOM_ID یا API_TOKEN تنظیم نشده‌اند.")
@@ -2761,7 +3509,7 @@ async def main():
     attempt = 0
     while attempt < max_reconnect_attempts:
         try:
-            room_id = os.environ.get("ROOM_ID", )
+            room_id = os.environ.get("ROOM_ID", room_id)
             bot_instance = AdvancedBot()
             bot_def = BotDefinition(room_id=room_id, api_token=api_token, bot=bot_instance)
             logger.info(f"تلاش برای اتصال به سرور Highrise... روم: {room_id}")
