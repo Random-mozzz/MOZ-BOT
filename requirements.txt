@@ -1,3 +1,4 @@
 wheel
 highrise-bot-sdk
 aiohttp
+requests
