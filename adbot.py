@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 import random
 import aiohttp
 import requests
+import re
 from collections import deque
 
 # تنظیم لاگینگ
@@ -85,20 +86,38 @@ def deserialize_outfit(data: list):
 # برای همین اسم فایل بر اساس ROOM_ID ساخته میشه تا هر ربات کاملاً مستقل باشه.
 _room_id_for_config = os.getenv("ROOM_ID", "default")
 CONFIG_FILE = f"bot_config_{_room_id_for_config}.json"
+
+# 👕 ظاهر پیش‌فرض ربات (طبق لینک‌های high.rs که خودت دادی) — هم موقع اجرا خودکار پوشیده میشه،
+# هم به‌عنوان پریست شماره ۱ ذخیره میشه که با !item set 1 قابل بازیابی باشه.
+DEFAULT_OUTFIT_ITEMS = [
+    {"type": "clothing", "amount": 1, "id": "hair_back-n_malenew23", "account_bound": False, "active_palette": None},
+    {"type": "clothing", "amount": 1, "id": "hair_front-n_malenew23", "account_bound": False, "active_palette": None},
+    {"type": "clothing", "amount": 1, "id": "pants-n_starteritems2019cuffedjeansblack", "account_bound": False, "active_palette": None},
+    {"type": "clothing", "amount": 1, "id": "eyebrow-n_02", "account_bound": False, "active_palette": None},
+    {"type": "clothing", "amount": 1, "id": "shoes-n_room12019bootsblack", "account_bound": False, "active_palette": None},
+    {"type": "clothing", "amount": 1, "id": "nose-n_01", "account_bound": False, "active_palette": None},
+    {"type": "clothing", "amount": 1, "id": "bag-n_sapphiredailies2020sapphirestones", "account_bound": False, "active_palette": None},
+    {"type": "clothing", "amount": 1, "id": "shirt-m_suit_black", "account_bound": False, "active_palette": None},
+    {"type": "clothing", "amount": 1, "id": "bag-n_amethystdailyrewards2020amethystwings", "account_bound": False, "active_palette": None},
+    {"type": "clothing", "amount": 1, "id": "eyes-n_virgo2019virgoamythesteyes", "account_bound": False, "active_palette": None},
+    {"type": "clothing", "amount": 1, "id": "earrings-n_amethystdailyrewards2020amethystearrings", "account_bound": False, "active_palette": None},
+    {"type": "clothing", "amount": 1, "id": "mouth-n_amethystdailyrewards2020chainmouth", "account_bound": False, "active_palette": None},
+]
+
 DEFAULT_CONFIG = {
-    "host_usernames": ["mudkun"],
+    "host_usernames": ["mudkun", "15.6.2"],
     "admin_usernames": ["mudkun"],
     "vip_usernames": [],
     "banned_users": [],
     "custom_ranks": {},
-    "current_outfit": None,
-    "outfit_presets": {},
+    "current_outfit": DEFAULT_OUTFIT_ITEMS,
+    "outfit_presets": {"1": DEFAULT_OUTFIT_ITEMS},
     "discovered_emotes": {},
     "dance_enabled": True,
     "teleport_locations": {},
     "language": "fa",
-    "welcome_message": "<#00ffff>✨ 🌟 𝐖𝐞𝐥𝐜𝐨𝐦𝐞 {username} ❤️ 𝐆𝐥𝐚𝐝 𝐭𝐨 𝐡𝐚𝐯𝐞 𝐲𝐨𝐮 𝐡𝐞𝐫𝐞!\n🕺 𝐔𝐬𝐞 𝐍𝐮𝐦𝐛𝐞𝐫𝐬 (𝟏-𝟐52)",
-    "announcement_interval": 300,
+    "welcome_message": "<#00ffff> ✨ 🌟 𝐖𝐞𝐥𝐜𝐨𝐦𝐞 {username} ❤️ 𝐆𝐥𝐚𝐝 𝐭𝐨 𝐡𝐚<#ff99ff> 𝐯𝐞 𝐲𝐨𝐮 𝐡𝐞𝐫𝐞!🕺 𝐔𝐬𝐞 𝐍𝐮𝐦𝐛𝐞𝐫𝐬 (𝟏-301)",
+    "announcement_interval": 120,
     "announcement_message": "برای اجاره بات به آیدی @nukdumپیام دهید!"
 }
 
@@ -117,7 +136,7 @@ class AdvancedBot(BaseBot):
         self.loopchat_task = None
         self.frozen_users = {}
         self.party_dances = {}
-        self.speaker_enabled = False # وضعیت روشن/خاموش بودن قابلیت چت هوشمند (اسپیکر)
+        self.speaker_enabled = True # وضعیت روشن/خاموش بودن قابلیت چت هوشمند (اسپیکر)
         self.speaker_mode = "polite"  # حالت لحن اسپیکر: polite (باادب) یا rude (بی‌ادب)
         self.following_username = None  # یوزرنیمی که ربات الان داره دنبالش می‌کنه (!fallow)
         self.muted_users = {}  # username -> دقیقه میوت (برای !mute)
@@ -188,7 +207,9 @@ class AdvancedBot(BaseBot):
             "!next": self.cmd_next_song,
             "!nowplaying": self.cmd_nowplaying,
             "!clearqueue": self.cmd_clearqueue,
-            "!afk": self.cmd_afk
+            "!afk": self.cmd_afk,
+            "!lang": self.cmd_lang,
+            "!emote": self.cmd_emote
         }
         self.emotes = {
             "1": "idle_zombie",
@@ -1315,6 +1336,14 @@ class AdvancedBot(BaseBot):
                 for key, value in DEFAULT_CONFIG.items():
                     if key not in self.config:
                         self.config[key] = value.copy() if isinstance(value, (list, dict)) else value
+                # 🔧 اصلاح فایل‌های تنظیماتِ قدیمی که از قبل current_outfit=null یا outfit_presets خالی
+                # ذخیره کرده بودن (قبل از اضافه شدن قابلیت ظاهر پیش‌فرض) — این‌ها رو صریحاً پر می‌کنیم
+                # چون حلقه‌ی بالا فقط کلیدهای کاملاً غایب رو اضافه می‌کنه، نه مقدار خالی/None موجود رو.
+                if not self.config.get("current_outfit"):
+                    self.config["current_outfit"] = DEFAULT_OUTFIT_ITEMS
+                if "1" not in self.config.get("outfit_presets", {}):
+                    self.config.setdefault("outfit_presets", {})["1"] = DEFAULT_OUTFIT_ITEMS
+                self.save_config()
                 logger.info("تنظیمات با موفقیت بارگذاری شد.")
             else:
                 logger.info("فایل تنظیمات یافت نشد، استفاده از تنظیمات پیش‌فرض...")
@@ -1384,10 +1413,66 @@ class AdvancedBot(BaseBot):
                 "party_success": "رقص شماره {dance_number} برای @{username} فعال شد!",
                 "party_all_success": "رقص شماره {dance_number} برای {count} کاربر فعال شد!",
                 "partys_success": "رقص اجباری برای @{username} متوقف شد!",
-                "partys_not_dancing": "کاربر @{username} در حال رقص اجباری نیست!"
+                "partys_not_dancing": "کاربر @{username} در حال رقص اجباری نیست!",
+                "lang_changed": "✅ زبان ربات به فارسی تغییر کرد."
+            },
+            "en": {
+                "welcome": self.config["welcome_message"],
+                "invalid_command": "❌ Unknown command! Use !help to see commands or message @mudkun.",
+                "no_permission": "Only admins can use this command!",
+                "user_not_found": "User {username} is not online.",
+                "invalid_format": "Invalid format: {format}",
+                "teleport_success": "@{username} was teleported to {location}!",
+                "teleport_error": "Teleport error: {error}",
+                "heart_success": "{count} hearts sent to @{username}!",
+                "heart_all_success": "{count} reactions sent to {count} people!",
+                "clap_success": "{count} claps sent to @{username}!",
+                "wink_success": "{count} winks sent to @{username}!",
+                "wave_success": "{count} waves sent to @{username}!",
+                "thumbs_success": "{count} thumbs-up sent to @{username}!",
+                "wallet_error": "Error fetching wallet: {error}",
+                "tip_success": "{amount} gold sent to @{username}.",
+                "tip_all_success": "Tipped {amount} gold to {count} people!",
+                "ban_success": "@{username} was banned!",
+                "unban_success": "@{username} was successfully unbanned!",
+                "unban_not_banned": "@{username} is not on the ban list.",
+                "dancechain_success": "Dance chain executed for @{username}!",
+                "addtele_success": "Location {location} saved!",
+                "deltele_success": "Location {location} was successfully deleted!",
+                "deltele_not_found": "Location {location} does not exist!",
+                "deltele_protected": "You cannot delete the default location {location}!",
+                "set_item_success": "Bot outfit changed to @{username}'s items!",
+                "listadd_empty": "No admins in the list.",
+                "listadd_success": "Admin list ({count} people):\n{admin_list}",
+                "freeze_success": "@{username} has been frozen!",
+                "unfreeze_success": "@{username} has been unfrozen!",
+                "unfreeze_not_frozen": "@{username} is not frozen!",
+                "party_success": "Dance #{dance_number} activated for @{username}!",
+                "party_all_success": "Dance #{dance_number} activated for {count} users!",
+                "partys_success": "Forced dance stopped for @{username}!",
+                "partys_not_dancing": "@{username} is not currently forced-dancing!",
+                "lang_changed": "✅ Bot language changed to English."
             }
         }
-        return messages[self.config["language"]][key].format(**kwargs)
+        lang = self.config.get("language", "fa")
+        if lang not in messages:
+            lang = "fa"
+        lang_dict = messages[lang]
+        if key not in lang_dict:
+            lang_dict = messages["fa"]
+        return lang_dict[key].format(**kwargs)
+
+    async def cmd_lang(self, user: User, parts: list):
+        """!lang fa / !lang en -> تغییر زبان کامل ربات (اسپیکر جدا و همیشه فارسی می‌مونه)"""
+        if user.username.lower() not in self.config["admin_usernames"]:
+            await self.highrise.chat(self.get_message("no_permission"))
+            return
+        if len(parts) < 2 or parts[1].lower() not in ("fa", "en"):
+            await self.highrise.chat("⚠️ Usage / فرمت: !lang fa | !lang en")
+            return
+        self.config["language"] = parts[1].lower()
+        self.save_config()
+        await self.highrise.chat(self.get_message("lang_changed"))
 
     async def cleanup_tasks(self):
         try:
@@ -1601,8 +1686,11 @@ class AdvancedBot(BaseBot):
                 # اگه اسپیکر خاموش باشه، پیام‌های + بی‌صدا نادیده گرفته میشن
             elif msg_lower in self.config.get("teleport_locations", {}):
                 loc = self.config["teleport_locations"][msg_lower]
+                restricted_rank = loc.get("restricted_rank")
                 if loc.get("admin_only", False) and username not in self.config["admin_usernames"]:
                     await self.highrise.chat(f"❌ مکان «{msg_lower}» فقط برای ادمین‌های ربات قابل استفاده‌ست.")
+                elif restricted_rank and username not in [m.lower() for m in self.config["custom_ranks"].get(restricted_rank, [])]:
+                    await self.highrise.chat(f"❌ مکان «{msg_lower}» فقط برای اعضای رنک «{restricted_rank}» قابل استفاده‌ست.")
                 else:
                     try:
                         dest = Position(x=loc["x"], y=loc["y"], z=loc["z"])
@@ -2558,32 +2646,47 @@ class AdvancedBot(BaseBot):
         logger.info(f"زنجیره رقص برای {user.username} اجرا شد.")
 
     async def cmd_addtele(self, user: User, parts: list):
-        """!addtele نام_مکان [admin] -> اگه آخرش کلمه‌ی admin باشه، فقط ادمین‌های ربات می‌تونن با گفتن اسم مکان تو چت به اونجا برن؛ وگرنه عمومیه."""
+        """!addtele نام_مکان [admin|نام_رنک] -> اگه admin بذاری فقط ادمین‌ها، اگه اسم یه رنک دلخواه بذاری فقط اعضای اون رنک،
+        وگرنه (بدون هیچی) همه می‌تونن با گفتن اسم مکان تو چت به اونجا برن."""
         if user.username.lower() not in self.config["admin_usernames"] and not self.is_host(user.username):
             await self.highrise.chat(self.get_message("no_permission"))
             return
-        parts = [p.lower() for p in parts]
         if len(parts) not in (2, 3):
-            await self.highrise.chat(self.get_message("invalid_format", format="!addtele نام_مکان [admin]"))
+            await self.highrise.chat(self.get_message("invalid_format", format="!addtele نام_مکان [admin|نام_رنک]"))
             return
 
-        admin_only = len(parts) == 3 and parts[2] == "admin"
-        if len(parts) == 3 and not admin_only:
-            await self.highrise.chat(self.get_message("invalid_format", format="!addtele نام_مکان [admin]"))
-            return
+        location_name = parts[1].lower()
+        restriction = parts[2] if len(parts) == 3 else None
+        admin_only = False
+        restricted_rank = None
 
-        location_name = parts[1]
+        if restriction:
+            if restriction.lower() == "admin":
+                admin_only = True
+            elif restriction in self.config["custom_ranks"]:
+                restricted_rank = restriction
+            else:
+                await self.highrise.chat(f"⚠️ رنک «{restriction}» وجود نداره. اول با !MR بسازش، یا بنویس admin.")
+                return
+
         pos = self.user_positions.get(user.username.lower())
         if not pos:
             await self.highrise.chat("موقعیت شما مشخص نیست!")
             return
         self.config["teleport_locations"][location_name] = {
-            "x": pos.x, "y": pos.y, "z": pos.z, "admin_only": admin_only
+            "x": pos.x, "y": pos.y, "z": pos.z,
+            "admin_only": admin_only,
+            "restricted_rank": restricted_rank,
         }
         self.save_config()
-        access_text = "فقط ادمین‌های ربات" if admin_only else "همه"
+        if admin_only:
+            access_text = "فقط ادمین‌های ربات"
+        elif restricted_rank:
+            access_text = f"فقط اعضای رنک «{restricted_rank}»"
+        else:
+            access_text = "همه"
         await self.highrise.chat(f"✅ مکان «{location_name}» ذخیره شد. (دسترسی: {access_text})\nحالا کافیه اسم «{location_name}» رو تو چت بگی تا بری اونجا.")
-        logger.info(f"مکان {location_name} توسط {user.username} اضافه شد. (admin_only={admin_only})")
+        logger.info(f"مکان {location_name} توسط {user.username} اضافه شد. (admin_only={admin_only}, rank={restricted_rank})")
 
     async def cmd_deltele(self, user: User, parts: list):
         if user.username.lower() not in self.config["admin_usernames"]:
@@ -3300,6 +3403,29 @@ class AdvancedBot(BaseBot):
         names = "، ".join(f"@{u}" for u in self.afk_users)
         await self.highrise.chat(f"💤 کاربرهای AFK: {names}")
 
+    async def cmd_emote(self, user: User, parts: list):
+        """!emote [name] یا !emote [لینک آیتم] -> اجرای هر دنس/ایموتی با اسم دقیق یا لینک high.rs، حتی اگه تو لیست !dances نباشه."""
+        if len(parts) < 2:
+            await self.highrise.chat("⚠️ Usage: !emote [name] or !emote [item link]")
+            return
+        raw = " ".join(parts[1:]).strip()
+
+        # حالت ۱: یه لینک high.rs/item?id=... داده (استخراج مستقیم شناسه‌ی واقعی آیتم)
+        link_match = re.search(r"high\.rs/item\?id=([A-Za-z0-9_.\-]+)", raw)
+        if link_match:
+            emote_id = link_match.group(1)
+        else:
+            # حالت ۲: اسم دقیق (alias تو self.emotes) یا خودِ شناسه‌ی خام
+            key = raw.lower()
+            emote_id = self.emotes.get(key, raw)
+
+        try:
+            await self.start_dance(user, emote_id)
+            await self.highrise.chat(f"✅ @{user.username} emote: {emote_id}")
+        except Exception as e:
+            await self.highrise.chat(f"❌ Error running emote: {e}")
+            logger.error(f"خطا در cmd_emote برای {emote_id}: {e}")
+
     # --- 🎧 صف درخواست آهنگ دیجی (متنی) ---
     # ⚠️ نکته‌ی صادقانه: API عمومی هایرایز کنترل مستقیم پخش صدای واقعی رو نمی‌ده (پخش موزیک از طریق
     # آیتم DJ Booth و توسط خود کاربرها انجام میشه). این یک صف درخواست متنیه که دیجی/ادمین باهاش کار می‌کنه.
@@ -3532,7 +3658,9 @@ class AdvancedBot(BaseBot):
             "!next - رفتن به آهنگ بعدی صف (ادمین/هاست)\n"
             "!nowplaying - نمایش آهنگ در حال پخش\n"
             "!clearqueue - خالی کردن کامل صف آهنگ (ادمین/هاست)\n"
-            "!addtele نام_مکان [admin] - ذخیره مکان فعلی؛ با گفتن اسمش تو چت میری اونجا (admin=فقط ادمین‌ها, بدون admin=عمومی)\n"
+            "!addtele نام_مکان [admin|نام_رنک] - ذخیره مکان فعلی؛ با گفتن اسمش تو چت میری اونجا (admin=فقط ادمین‌ها, نام_رنک=فقط اون رنک, بدون هیچی=عمومی)\n"
+            "!lang fa / !lang en - تغییر کامل زبان ربات (ادمین)\n"
+            "!emote [اسم یا لینک آیتم] - اجرای هر دنس/ایموتی، حتی خارج از لیست !dances\n"
             "!deltele نام_مکان - حذف مکان (ادمین)\n"
             "!welcome پیام - تنظیم پیام خوش‌آمدگویی (ادمین)\n"
             "!addadmin @username / !removeadmin @username - مدیریت ادمین‌ها (فقط Host)\n"
@@ -3555,13 +3683,21 @@ class AdvancedBot(BaseBot):
         )
 
     def build_dances_text(self) -> str:
-        lines = ["💃 لیست کد دنس‌ها (کد -> نام دنس):\n"]
-        numeric_codes = sorted(
-            [k for k in self.emotes.keys() if k.isdigit()],
-            key=lambda k: int(k),
-        )
-        for code in numeric_codes:
-            lines.append(f"{code} -> {self.emotes[code]}")
+        """فقط اسم‌های تمیز انگلیسی (بدون کد عددی، بدون کد فارسی، بدون شناسه‌ی خام دنس) نشون داده میشه."""
+        value_to_name = {}
+        for key, value in self.emotes.items():
+            if key.isdigit():
+                continue
+            if all('۰' <= c <= '۹' for c in key):
+                continue
+            if not re.fullmatch(r"[A-Za-z]+", key):
+                continue
+            if value not in value_to_name or len(key) < len(value_to_name[value]):
+                value_to_name[value] = key
+
+        names = sorted(value_to_name.values(), key=str.lower)
+        lines = ["💃 Dance list (English names only):\n"]
+        lines.extend(names)
         return "\n".join(lines)
 
     async def cmd_commands(self, user: User, parts: list):
