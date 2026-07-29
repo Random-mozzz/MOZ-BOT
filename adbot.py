@@ -117,8 +117,8 @@ DEFAULT_CONFIG = {
     "teleport_locations": {},
     "language": "fa",
     "welcome_message": "<#00ffff> ✨ 🌟 𝐖𝐞𝐥𝐜𝐨𝐦𝐞 {username} ❤️ 𝐆𝐥𝐚𝐝 𝐭𝐨 𝐡𝐚<#ff99ff> 𝐯𝐞 𝐲𝐨𝐮 𝐡𝐞𝐫𝐞!🕺 𝐔𝐬𝐞 𝐍𝐮𝐦𝐛𝐞𝐫𝐬 (𝟏-301)",
-    "announcement_interval": 120,
-    "announcement_message": "برای اجاره بات به آیدی @nukdumپیام دهید!"
+    "announcement_interval": 600,
+    "announcement_message": "برای اجاره بات به آیدی @nmudkunپیام دهید!"
 }
 
 class AdvancedBot(BaseBot):
@@ -465,6 +465,7 @@ class AdvancedBot(BaseBot):
             "251": "dance-twerk",
             "252": "emote-meditate-idle",
             "301": "emote-adoringfans",
+            "302": "emote-afk-idle",
             "۱": "idle_zombie",
             "۲": "idle_layingdown2",
             "۳": "idle_layingdown",
@@ -718,6 +719,7 @@ class AdvancedBot(BaseBot):
             "۲۵۱": "dance-twerk",
             "۲۵۲": "emote-meditate-idle",
             "۳۰۱": "emote-adoringfans",
+            "۳۰۲": "emote-afk-idle",
             "zombie": "idle_zombie",
             "relaxed": "idle_layingdown2",
             "attentive": "idle_layingdown",
@@ -744,6 +746,7 @@ class AdvancedBot(BaseBot):
             "theWave": "emote-wave",
             "tired": "emote-tired",
             "think": "emote-think",
+            "afk": "emote-afk-idle",
             "theatrical": "emote-theatrical",
             "tapdance": "emote-tapdance",
             "superrun": "emote-superrun",
