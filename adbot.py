@@ -105,7 +105,7 @@ DEFAULT_OUTFIT_ITEMS = [
 ]
 
 DEFAULT_CONFIG = {
-    "host_usernames": ["mudkun", "15.6.2"],
+    "host_usernames": ["mudkun", "little._nini"],
     "admin_usernames": ["mudkun"],
     "vip_usernames": [],
     "banned_users": [],
@@ -118,7 +118,7 @@ DEFAULT_CONFIG = {
     "language": "fa",
     "welcome_message": "<#00ffff> ✨ 🌟 𝐖𝐞𝐥𝐜𝐨𝐦𝐞 {username} ❤️ 𝐆𝐥𝐚𝐝 𝐭𝐨 𝐡𝐚<#ff99ff> 𝐯𝐞 𝐲𝐨𝐮 𝐡𝐞𝐫𝐞!🕺 𝐔𝐬𝐞 𝐍𝐮𝐦𝐛𝐞𝐫𝐬 (𝟏-301)",
     "announcement_interval": 600,
-    "announcement_message": "برای اجاره بات به آیدی @nmudkunپیام دهید!"
+    "announcement_message": "برای اجاره بات به آیدی @nukdumپیام دهید!"
 }
 
 class AdvancedBot(BaseBot):
@@ -4080,7 +4080,7 @@ async def main():
     from http.server import BaseHTTPRequestHandler, HTTPServer
     
     logger.info("تلاش برای بارگذاری متغیرهای محیطی...")
-    room_id = os.getenv("ROOM_ID", "6a64d98fea58f09dce92565e")
+    room_id = os.getenv("ROOM_ID", "6a6b446ba0eae7fdccc047ec")
     api_token = os.getenv("API_TOKEN", "5aa6d4e813f304b0dadf3c96fe073802c8a9e4281194c387d3ad9075ac431bfe")
     
     if not room_id or not api_token:
